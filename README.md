@@ -1,5 +1,7 @@
 # gorm-cache
 
+[![Go](https://github.com/woorui/gorm-cache/actions/workflows/go.yml/badge.svg)](https://github.com/woorui/gorm-cache/actions/workflows/go.yml)
+
 ## Overview
 
 gormcache is cache plugin for gorm.io/gorm.
