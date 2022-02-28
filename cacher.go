@@ -2,10 +2,10 @@ package gormcache
 
 import (
 	"context"
+	"encoding/json"
 	"reflect"
 	"time"
 
-	json "github.com/json-iterator/go"
 	"golang.org/x/sync/singleflight"
 	"gorm.io/gorm"
 	"gorm.io/gorm/callbacks"
@@ -19,6 +19,11 @@ type nocachectx struct{}
 type CacheKV interface {
 	Get(ctx context.Context, key string) (bool, string, error)
 	Set(ctx context.Context, key, value string, exp time.Duration) error
+}
+
+type Marshaler interface {
+	Marshal(v interface{}) ([]byte, error)
+	Unmarshal(data []byte, v interface{}) error
 }
 
 // ErrGormCache error for gorm-cache.
@@ -36,8 +41,8 @@ func NewErrGormCache(err error) error {
 	return nil
 }
 
-// GormCache is cache plugin for gorm.io/gorm.
-type GormCache struct {
+// GormCacher is cache plugin for gorm.io/gorm.
+type GormCacher struct {
 	kv                     CacheKV
 	queryAfterRegisterName string
 	schemaNames            map[string]bool
@@ -46,10 +51,10 @@ type GormCache struct {
 	cacheKeyFunc           func(*gorm.DB) string
 }
 
-// RegisterGormCache implements `gorm.Plugin` interface, exp is auto expires cache duration,
-// Schemas is gorm schema to be cached.
-func RegisterGormCache(kv CacheKV, exp time.Duration, options ...Option) *GormCache {
-	cacher := &GormCache{
+// GormCache implements `gorm.Plugin` interface, exp is auto expires cache duration,
+// Models is gorm model to be cached.
+func GormCache(kv CacheKV, exp time.Duration, options ...Option) *GormCacher {
+	cacher := &GormCacher{
 		kv:                     kv,
 		queryAfterRegisterName: Name + ":after_query",
 		exp:                    exp,
@@ -64,10 +69,10 @@ func RegisterGormCache(kv CacheKV, exp time.Duration, options ...Option) *GormCa
 }
 
 // Name `gorm.Plugin` implements.
-func (g *GormCache) Name() string { return Name }
+func (g *GormCacher) Name() string { return Name }
 
 // Initialize `gorm.Plugin` implements.
-func (g *GormCache) Initialize(db *gorm.DB) error {
+func (g *GormCacher) Initialize(db *gorm.DB) error {
 	if err := db.Callback().Query().Replace("gorm:query", g.query); err != nil {
 		return NewErrGormCache(err)
 	}
@@ -81,7 +86,7 @@ func (g *GormCache) Initialize(db *gorm.DB) error {
 }
 
 // query replace gorm:query
-func (g *GormCache) query(db *gorm.DB) {
+func (g *GormCacher) query(db *gorm.DB) {
 	if db.DryRun || db.Error != nil {
 		return
 	}
@@ -120,7 +125,7 @@ func queryFromDB(db *gorm.DB) {
 }
 
 // queryAfter set cache to kv after query.
-func (g *GormCache) queryAfter(db *gorm.DB) {
+func (g *GormCacher) queryAfter(db *gorm.DB) {
 	if v := db.Statement.Context.Value(nocachectx{}); v == nil {
 		return
 	}
@@ -143,7 +148,7 @@ func (g *GormCache) queryAfter(db *gorm.DB) {
 }
 
 // canCache checks whether the current sql is cacheable
-func (g *GormCache) canCache(db *gorm.DB) bool {
+func (g *GormCacher) canCache(db *gorm.DB) bool {
 	tname := structType(db.Statement.ReflectValue.Interface()).Name()
 	_, ok := g.schemaNames[tname]
 	return ok
@@ -151,7 +156,7 @@ func (g *GormCache) canCache(db *gorm.DB) bool {
 
 // queryResult get sql result as a string. only support struct or struct slice and array here.
 // if not support, return false and empty string.
-func (g *GormCache) queryResult(db *gorm.DB) (bool, string, error) {
+func (g *GormCacher) queryResult(db *gorm.DB) (bool, string, error) {
 	var (
 		fields       = db.Statement.Schema.Fields
 		reflectValue = db.Statement.ReflectValue
@@ -164,8 +169,8 @@ func (g *GormCache) queryResult(db *gorm.DB) (bool, string, error) {
 				valueData[field.Name] = fieldValue
 			}
 		}
-		val, err := json.MarshalToString(valueData)
-		return true, val, err
+		val, err := json.Marshal(valueData)
+		return true, string(val), err
 	case reflect.Slice, reflect.Array:
 		lens := reflectValue.Len()
 		valueArrData := make([]map[string]interface{}, lens)
@@ -179,8 +184,8 @@ func (g *GormCache) queryResult(db *gorm.DB) (bool, string, error) {
 				}
 			}
 		}
-		val, err := json.MarshalToString(valueArrData)
-		return true, val, err
+		val, err := json.Marshal(valueArrData)
+		return true, string(val), err
 	default:
 		db.Logger.Info(db.Statement.Context, "gorm-cache: %s, type not support", reflectValue.Kind().String())
 	}
@@ -188,9 +193,9 @@ func (g *GormCache) queryResult(db *gorm.DB) (bool, string, error) {
 }
 
 // unmarshalToDB unmarshal cache value to gorm.DB, set data to dest.
-func (g *GormCache) unmarshalToDB(cacheValue string, db *gorm.DB) {
+func (g *GormCacher) unmarshalToDB(cacheValue string, db *gorm.DB) {
 	reflectValue := db.Statement.ReflectValue
-	err := json.UnmarshalFromString(cacheValue, db.Statement.Dest)
+	err := json.Unmarshal([]byte(cacheValue), db.Statement.Dest)
 	if err != nil {
 		db.AddError(err)
 		return
@@ -210,7 +215,7 @@ func (g *GormCache) unmarshalToDB(cacheValue string, db *gorm.DB) {
 	reflectValue.Set(elem)
 }
 
-// structType get struct type name for checking whether the schema can be cached.
+// structType get struct type name for checking whether the model can be cached.
 func structType(val interface{}) reflect.Type {
 	typ := reflect.TypeOf(val)
 	for typ.Kind() == reflect.Ptr {
@@ -229,18 +234,18 @@ func structType(val interface{}) reflect.Type {
 	return t
 }
 
-type Option func(*GormCache)
+type Option func(*GormCacher)
 
 // CacheKeyFunc allow you diy cache key for CacheKV.
 func CacheKeyFunc(f func(*gorm.DB) string) Option {
-	return func(gc *GormCache) {
+	return func(gc *GormCacher) {
 		gc.cacheKeyFunc = f
 	}
 }
 
-// Schemas accept schema that you want to be cached.
-func Schemas(schemas ...interface{}) Option {
-	return func(gc *GormCache) {
+// Models accept model that you want to be cached.
+func Models(schemas ...interface{}) Option {
+	return func(gc *GormCacher) {
 		schemaNames := make(map[string]bool, len(schemas))
 		for _, item := range schemas {
 			schemaNames[structType(item).Name()] = true
