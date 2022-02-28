@@ -21,8 +21,11 @@ type CacheKV interface {
 	Set(ctx context.Context, key, value string, exp time.Duration) error
 }
 
+// Marshaler defines how to set to cache.
+//
+// the default Marshaler is std json.Marshal and json.Unmarshal.
 type Marshaler interface {
-	Marshal(v interface{}) ([]byte, error)
+	Marshal(interface{}) ([]byte, error)
 	Unmarshal(data []byte, v interface{}) error
 }
 
@@ -49,6 +52,7 @@ type GormCacher struct {
 	exp                    time.Duration
 	requestGroup           singleflight.Group
 	cacheKeyFunc           func(*gorm.DB) string
+	marshaler              Marshaler
 }
 
 // GormCache implements `gorm.Plugin` interface, exp is auto expires cache duration,
@@ -61,6 +65,7 @@ func GormCache(kv CacheKV, exp time.Duration, options ...Option) *GormCacher {
 		cacheKeyFunc: func(db *gorm.DB) string {
 			return db.Dialector.Explain(db.Statement.SQL.String(), db.Statement.Vars...)
 		},
+		marshaler: &stdMarshaler{},
 	}
 	for _, o := range options {
 		o(cacher)
@@ -253,3 +258,15 @@ func Models(schemas ...interface{}) Option {
 		gc.schemaNames = schemaNames
 	}
 }
+
+// OptMarshaler inject your Marshaler.
+func OptMarshaler(marshaler Marshaler) Option {
+	return func(gc *GormCacher) {
+		gc.marshaler = marshaler
+	}
+}
+
+type stdMarshaler struct{}
+
+func (m *stdMarshaler) Marshal(v interface{}) ([]byte, error)      { return json.Marshal(v) }
+func (m *stdMarshaler) Unmarshal(data []byte, v interface{}) error { return json.Unmarshal(data, v) }
