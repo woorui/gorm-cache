@@ -2,6 +2,7 @@ package gormcache
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"reflect"
 	"time"
@@ -109,18 +110,28 @@ func (g *GormCacher) query(db *gorm.DB) {
 			g.unmarshalToDB(value, db)
 			return
 		}
-		g.requestGroup.Do(cachekey, func() (interface{}, error) {
-			queryFromDB(db)
-			return nil, db.Error
-		})
+		g.queryFromDB(db, cachekey)
+		return
 	}
-	queryFromDB(db)
+	g.queryFromDB(db, "")
 }
 
 // queryFromDB query from database.
-func queryFromDB(db *gorm.DB) {
-	db.Statement.Context = context.WithValue(db.Statement.Context, nocachectx{}, 1)
-	rows, err := db.Statement.ConnPool.QueryContext(db.Statement.Context, db.Statement.SQL.String(), db.Statement.Vars...)
+func (g *GormCacher) queryFromDB(db *gorm.DB, cachekey string) {
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if cachekey == "" {
+		rows, err = db.Statement.ConnPool.QueryContext(db.Statement.Context, db.Statement.SQL.String(), db.Statement.Vars...)
+	} else {
+		var any interface{}
+		any, err, _ = g.requestGroup.Do(cachekey, func() (interface{}, error) {
+			db.Statement.Context = context.WithValue(db.Statement.Context, nocachectx{}, 1)
+			return db.Statement.ConnPool.QueryContext(db.Statement.Context, db.Statement.SQL.String(), db.Statement.Vars...)
+		})
+		rows = any.(*sql.Rows)
+	}
 	if err != nil {
 		db.AddError(err)
 		return
