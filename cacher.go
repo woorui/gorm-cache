@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"time"
 
@@ -22,12 +23,12 @@ type CacheKV interface {
 	Set(ctx context.Context, key, value string, exp time.Duration) error
 }
 
-// Marshaler defines how to set to cache.
+// Codec defines how to Marshal and Unmarshal cache data.
 //
-// the default Marshaler is std json.Marshal and json.Unmarshal.
-type Marshaler interface {
+// the default Codec is std json.Marshal and json.Unmarshal.
+type Codec interface {
 	Marshal(interface{}) ([]byte, error)
-	Unmarshal(data []byte, v interface{}) error
+	Unmarshal([]byte, interface{}) error
 }
 
 // ErrGormCache error for gorm-cache.
@@ -53,7 +54,7 @@ type GormCacher struct {
 	exp                    time.Duration
 	requestGroup           singleflight.Group
 	cacheKeyFunc           func(*gorm.DB) string
-	marshaler              Marshaler
+	codec                  Codec
 }
 
 // GormCache implements `gorm.Plugin` interface, exp is auto expires cache duration,
@@ -66,7 +67,7 @@ func GormCache(kv CacheKV, exp time.Duration, options ...Option) *GormCacher {
 		cacheKeyFunc: func(db *gorm.DB) string {
 			return db.Dialector.Explain(db.Statement.SQL.String(), db.Statement.Vars...)
 		},
-		marshaler: &stdMarshaler{},
+		codec: &stdJsonCodec{},
 	}
 	for _, o := range options {
 		o(cacher)
@@ -79,6 +80,9 @@ func (g *GormCacher) Name() string { return Name }
 
 // Initialize `gorm.Plugin` implements.
 func (g *GormCacher) Initialize(db *gorm.DB) error {
+	if len(g.modelNames) == 0 {
+		return NewErrGormCache(errors.New("call `Models` to add model that needs to be cached"))
+	}
 	if err := db.Callback().Query().Replace("gorm:query", g.query); err != nil {
 		return NewErrGormCache(err)
 	}
@@ -270,14 +274,14 @@ func Models(models ...interface{}) Option {
 	}
 }
 
-// OptMarshaler inject your Marshaler.
-func OptMarshaler(marshaler Marshaler) Option {
+// WithCodec inject your codec.
+func WithCodec(codec Codec) Option {
 	return func(gc *GormCacher) {
-		gc.marshaler = marshaler
+		gc.codec = codec
 	}
 }
 
-type stdMarshaler struct{}
+type stdJsonCodec struct{}
 
-func (m *stdMarshaler) Marshal(v interface{}) ([]byte, error)      { return json.Marshal(v) }
-func (m *stdMarshaler) Unmarshal(data []byte, v interface{}) error { return json.Unmarshal(data, v) }
+func (m *stdJsonCodec) Marshal(v interface{}) ([]byte, error)      { return json.Marshal(v) }
+func (m *stdJsonCodec) Unmarshal(data []byte, v interface{}) error { return json.Unmarshal(data, v) }
