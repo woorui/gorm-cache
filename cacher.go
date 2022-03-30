@@ -50,7 +50,7 @@ func NewErrGormCache(err error) error {
 type GormCacher struct {
 	kv                     CacheKV
 	queryAfterRegisterName string
-	modelNames             map[string]bool
+	modelNames             map[string]struct{}
 	exp                    time.Duration
 	requestGroup           singleflight.Group
 	cacheKeyFunc           func(*gorm.DB) string
@@ -266,9 +266,9 @@ func CacheKeyFunc(f func(*gorm.DB) string) Option {
 // Models accept model that you want to be cached.
 func Models(models ...interface{}) Option {
 	return func(gc *GormCacher) {
-		modelNames := make(map[string]bool, len(models))
+		modelNames := make(map[string]struct{}, len(models))
 		for _, item := range models {
-			modelNames[structType(item).Name()] = true
+			modelNames[structType(item).Name()] = struct{}{}
 		}
 		gc.modelNames = modelNames
 	}
