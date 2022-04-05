@@ -13,7 +13,7 @@ import (
 	"gorm.io/gorm/callbacks"
 )
 
-var Name = "gorm-cache"
+const Name = "gorm-cache"
 
 type nocachectx struct{}
 
