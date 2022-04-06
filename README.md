@@ -4,7 +4,7 @@
 
 ## Overview
 
-gormcache is cache plugin for https://gorm.io(v2 version), It sets cache and auto expires cache after a specified duration.
+gormcache is cache plugin for https://gorm.io (v2 version), It sets cache and auto expires cache after a specified duration.
 
 It don't delete or update the cache when sql do deleting or updating.
 
