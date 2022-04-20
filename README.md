@@ -8,9 +8,9 @@ gormcache is cache plugin for https://gorm.io (v2 version), It sets cache and au
 
 It don't delete or update the cache when sql do deleting or updating.
 
-I use gormcache to cache tables with high select frequency but low update frequency. like come config or common resource.
+I use gormcache to cache tables with high select frequency but low update frequency. like some config or common resource.
 
-#### Some option api
+#### Feature
 
 1. It Supports a variety of cache driver by implementing `CacheKV` interface.
 
